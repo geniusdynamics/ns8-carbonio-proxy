@@ -1,0 +1,27 @@
+#!/bin/bash
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+# The volume copies of a backup are taken while Carbonio runs: on the next
+# start, carbonio-run loads the consistent dumps taken at the same time
+# (LDAP directory and mailbox database).
+
+set -e
+exec 1>&2
+
+mkdir -p restore
+chmod 0700 restore
+found=0
+for file in ldap.ldif mariadb.sql.gz; do
+    if [[ -s "dump/${file}" ]]; then
+        mv -f "dump/${file}" "restore/${file}"
+        found=1
+    fi
+done
+if ((found)); then
+    touch restore/restore.request
+    echo "The backup dumps will be loaded on the first start"
+fi

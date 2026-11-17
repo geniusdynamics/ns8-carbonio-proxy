@@ -1,0 +1,57 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# Deploy the Traefik certificate of the host name into Carbonio, for the
+# MTA (STARTTLS, 465, 587), IMAP, POP3 and the Admin Panel. Without a
+# Let's Encrypt certificate, Carbonio keeps its self-signed one.
+#
+
+import hashlib
+import os
+import shutil
+import sys
+
+import agent
+import carbonio
+
+os.chdir(os.environ["AGENT_STATE_DIR"])
+if not carbonio.is_true(carbonio.env("TRAEFIK_LETS_ENCRYPT", "False")):
+    sys.exit(0)
+if not carbonio.service_active():
+    sys.exit(0)
+
+host = carbonio.env("TRAEFIK_HOST")
+try:
+    cert, key = agent.get_certificate_and_key(host)
+except Exception as ex:
+    print(agent.SD_WARNING + f"No certificate for {host} yet: {ex}", file=sys.stderr)
+    sys.exit(0)
+if not cert or not key:
+    sys.exit(0)
+
+fingerprint = hashlib.sha256(cert.encode()).hexdigest()
+try:
+    with open("runtime/certificate.sha256") as fsum:
+        if fsum.read().strip() == fingerprint:
+            sys.exit(0)
+except FileNotFoundError:
+    pass
+
+workdir = "dump/cert"
+os.makedirs(workdir, mode=0o700, exist_ok=True)
+try:
+    carbonio.write_file_atomic(f"{workdir}/cert.pem", cert, 0o600)
+    carbonio.write_file_atomic(f"{workdir}/key.pem", key, 0o600)
+    proc = carbonio.podman_exec(["/usr/local/sbin/carbonio-deploy-cert", "/run/ns8-carbonio/dump/cert"], check=False)
+    print(proc.stderr, file=sys.stderr)
+    if proc.returncode != 0:
+        print(agent.SD_WARNING + f"The certificate of {host} was not deployed into Carbonio", file=sys.stderr)
+        sys.exit(0)
+finally:
+    shutil.rmtree(workdir, ignore_errors=True)
+carbonio.write_file_atomic("runtime/certificate.sha256", fingerprint + "\n")

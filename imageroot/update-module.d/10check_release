@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# Runs while the previous release still runs. Compare the Carbonio packages
+# of the new image with the ones that last ran on the data:
+#
+# - older (a downgrade): refuse. CARBONIO_UPDATE_BLOCKED stops 20restart,
+#   so the previous release keeps running until the next reboot, where the
+#   container refuses to start on its own (exit code 3). Install the
+#   previous module version again.
+# - newer: take fresh LDAP and database dumps (state/dump), then
+#   20restart starts the new release, which upgrades the data.
+#
+
+import os
+import subprocess
+import sys
+
+import agent
+import carbonio
+
+
+def parse(text):
+    return dict(line.split(None, 1) for line in text.splitlines() if len(line.split(None, 1)) == 2)
+
+
+agent.unset_env("CARBONIO_UPDATE_BLOCKED")
+with open(os.path.join(os.environ["AGENT_INSTALL_DIR"], "etc", "carbonio-packages.txt")) as fpkg:
+    new = parse(fpkg.read())
+with open(os.path.join(os.environ["AGENT_INSTALL_DIR"], "etc", "carbonio-release")) as frel:
+    new_release = frel.read().strip()
+
+if not carbonio.service_active():
+    # Nothing to compare: carbonio-run checks again on start
+    agent.set_env("CARBONIO_RELEASE", new_release)
+    sys.exit(0)
+
+proc = carbonio.podman_exec(["cat", "/opt/zextras/conf/.ns8/packages.txt"], check=False)
+old = parse(proc.stdout) if proc.returncode == 0 else {}
+
+verdict = "same"
+for pkg, old_version in old.items():
+    new_version = new.get(pkg)
+    if not new_version:
+        continue
+    if carbonio.compare_deb_versions(new_version, old_version) < 0:
+        verdict = f"downgrade {pkg} {old_version} -> {new_version}"
+        break
+    if new_version != old_version:
+        verdict = "upgrade"
+
+if verdict.startswith("downgrade"):
+    agent.set_env("CARBONIO_UPDATE_BLOCKED", verdict)
+    print(agent.SD_ERR + f"Refusing the Carbonio {verdict}: downgrades are not supported. "
+          "The running release is kept. Install the previous module version again.", file=sys.stderr)
+    sys.exit(1)
+
+if verdict == "upgrade":
+    print(f"Carbonio upgrade to {new_release}: dumping the directory and the database first", file=sys.stderr)
+    subprocess.run(["module-dump-state"], check=False)
+agent.set_env("CARBONIO_RELEASE", new_release)

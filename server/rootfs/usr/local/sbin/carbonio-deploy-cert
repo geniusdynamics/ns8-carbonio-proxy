@@ -1,0 +1,57 @@
+#!/bin/bash
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# Deploy the certificate that Traefik obtained for the host name (DIR/cert.pem
+# with its chain, DIR/key.pem) as the Carbonio commercial certificate: the
+# MTA, the IMAP/POP3 proxy and the Admin Panel then present it. The web
+# client is already served by Traefik with the same certificate.
+#
+# Run inside the running container (podman exec): carbonio-deploy-cert DIR
+#
+
+set -euo pipefail
+src=${1:?usage: carbonio-deploy-cert DIR}
+work=$(mktemp -d /opt/zextras/data/tmp/ns8-cert.XXXXXX)
+trap 'rm -rf "${work}"' EXIT
+chmod 0700 "${work}"
+
+openssl=/opt/zextras/common/bin/openssl
+
+# Split the PEM bundle: the first certificate is the server one
+awk -v dir="${work}" '
+    /-----BEGIN CERTIFICATE-----/ { n++ }
+    n == 1 { print > (dir "/cert.pem") }
+    n > 1 { print > (dir "/chain.pem") }
+' "${src}/cert.pem"
+[[ -s "${work}/cert.pem" ]] || { echo "No certificate in ${src}/cert.pem" >&2; exit 2; }
+
+# Carbonio verifies the chain up to a self-signed root: add the root CA of
+# the last certificate of the chain from the system trust store
+last="${work}/cert.pem"
+if [[ -s "${work}/chain.pem" ]]; then
+    awk -v dir="${work}" '/-----BEGIN CERTIFICATE-----/ { n++ } { print > (dir "/c" n ".pem") }' "${work}/chain.pem"
+    last=$(ls "${work}"/c*.pem | sort -V | tail -1)
+fi
+issuer_hash=$("${openssl}" x509 -in "${last}" -noout -issuer_hash)
+root=""
+for candidate in /etc/ssl/certs/"${issuer_hash}".*; do
+    [[ -e "${candidate}" ]] && root=${candidate} && break
+done
+if [[ -n "${root}" ]] && ! cmp -s "${root}" "${last}"; then
+    cat "${root}" >>"${work}/chain.pem"
+fi
+[[ -s "${work}/chain.pem" ]] || { echo "The certificate chain is incomplete: cannot deploy it" >&2; exit 2; }
+
+install -o zextras -g zextras -m 0640 "${src}/key.pem" /opt/zextras/ssl/carbonio/commercial/commercial.key
+chown -R zextras:zextras "${work}"
+su - zextras -c "/opt/zextras/bin/zmcertmgr verifycrt comm /opt/zextras/ssl/carbonio/commercial/commercial.key ${work}/cert.pem ${work}/chain.pem" >&2
+su - zextras -c "/opt/zextras/bin/zmcertmgr deploycrt comm ${work}/cert.pem ${work}/chain.pem" >&2
+# Reload the services that present the certificate
+su - zextras -c "/opt/zextras/bin/zmproxyctl reload" >&2 || true
+su - zextras -c "/opt/zextras/bin/zmmtactl reload" >&2 || true
+echo "Certificate deployed" >&2

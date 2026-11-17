@@ -1,11 +1,22 @@
 #!/bin/bash
 
 #
-# Copyright (C) 2022 Nethesis S.r.l.
+# Copyright (C) 2026 Genius Dynamics
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 
-set -e
+#
+# Before the backup: consistent dumps of the directory (LDIF) and of the
+# mailbox database, next to the volume copies. restore-module loads them.
+#
 
-echo "Dumping kickstart postgres database"
-podman exec postgresql-app pg_dump -U postgres --format=c  kickstart > kickstart.pg_dump
+set -e
+exec 1>&2
+
+if ! systemctl --user -q is-active carbonio.service; then
+    echo "carbonio.service is not running: the backup holds the volumes only"
+    exit 0
+fi
+mkdir -p dump
+chmod 0700 dump
+podman exec carbonio /usr/local/sbin/carbonio-dump /run/ns8-carbonio/dump

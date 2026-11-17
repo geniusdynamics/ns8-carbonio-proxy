@@ -1,0 +1,24 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+# Start the cloned proxy with its previous settings. Let's Encrypt is
+# never requested here: the DNS may not point to this node yet.
+
+import os
+
+import agent
+import agent.tasks
+
+env = os.environ
+ret = agent.tasks.run(agent_id=env["AGENT_ID"], action="configure-module", data={
+    "host": env["TRAEFIK_HOST"],
+    "http2https": env.get("TRAEFIK_HTTP2HTTPS", "True").lower() == "true",
+    "lets_encrypt": False,
+    "join": env.get("CARBONIO_JOIN", ""),
+    "admin_host": env.get("CARBONIO_ADMIN_HOSTNAME", ""),
+})
+agent.assert_exp(ret["exit_code"] == 0, "configure-module failed")
