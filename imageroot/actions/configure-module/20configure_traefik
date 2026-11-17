@@ -1,1 +1,48 @@
-# Placeholder, see bug NethServer/dev#7058
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+# Traefik terminates HTTPS for the web client and forwards it to the
+# Carbonio proxy (443 in the container, self-signed). An optional second
+# host name reaches the Admin Panel (6071).
+
+import json
+import os
+import sys
+
+import agent
+import carbonio
+
+request = json.load(sys.stdin)
+module_id = os.environ["MODULE_ID"]
+web_port, admin_port = (carbonio.tcp_ports() + [0, 0])[:2]
+lets_encrypt = request.get("lets_encrypt", False)
+
+agent.set_route({
+    "instance": module_id,
+    "url": f"https://127.0.0.1:{web_port}",
+    "host": request["host"].lower(),
+    "http2https": request.get("http2https", True),
+    "lets_encrypt": lets_encrypt,
+    "skip_cert_verify": True,
+})
+
+admin_host = carbonio.env("CARBONIO_ADMIN_HOSTNAME")
+if admin_host:
+    agent.set_route({
+        "instance": f"{module_id}-admin",
+        "url": f"https://127.0.0.1:{admin_port}",
+        "host": admin_host,
+        "http2https": True,
+        "lets_encrypt": lets_encrypt,
+        "skip_cert_verify": True,
+    })
+elif agent.get_route(f"{module_id}-admin"):
+    agent.tasks.run(
+        agent_id=agent.resolve_agent_id("traefik@node"),
+        action="delete-route",
+        data={"instance": f"{module_id}-admin"},
+    )

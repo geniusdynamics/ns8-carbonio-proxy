@@ -1,0 +1,33 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+# Health check: the state of carbonio.service, of every Carbonio service
+# and of the other servers of the installation. No secret here.
+
+import json
+import sys
+
+import carbonio
+
+active = carbonio.service_active()
+status = carbonio.carbonio_status() if active else {}
+services = status.get("services") or {}
+healthy = active and status.get("phase") == "running" and bool(services) and all(s == "running" for s in services.values())
+json.dump({
+    "healthy": healthy,
+    "service_active": active,
+    "phase": status.get("phase", "stopped" if not active else "unknown"),
+    "release": status.get("release", carbonio.env("CARBONIO_RELEASE")),
+    "services": services,
+    "error": status.get("error", ""),
+    "cluster_role": carbonio.cluster_role(),
+    "servers": [
+        {k: s.get(k, "") for k in ("module_id", "fqdn", "role", "node", "release", "host")}
+        for s in carbonio.list_servers()
+        if s["module_id"] == carbonio.group_master() or s.get("master") == carbonio.group_master()
+    ],
+}, fp=sys.stdout)

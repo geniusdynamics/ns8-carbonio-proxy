@@ -1,0 +1,22 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+# Traefik renewed the certificate of the host name: deploy it into Carbonio
+# for SMTP, IMAP, POP3 and the Admin Panel
+
+import json
+import os
+import subprocess
+import sys
+
+import agent
+
+event = json.load(sys.stdin)
+host = os.environ.get("TRAEFIK_HOST", "")
+if not host or not agent.certificate_event_matches(event, host):
+    sys.exit(0)
+subprocess.run(["carbonio-sync-certificate"], check=False)

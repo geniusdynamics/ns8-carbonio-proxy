@@ -1,0 +1,36 @@
+#!/bin/bash
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# Health of the Carbonio services, as JSON on stdout:
+#   {"phase": "running", "release": "26.9.2", "services": {"mta": "running", ...}, "error": ""}
+# Exit code 0 when every enabled service runs.
+#
+
+status_dir=/run/ns8-carbonio-status
+phase=$(cat "${status_dir}/phase" 2>/dev/null || echo unknown)
+error=$(cat "${status_dir}/error" 2>/dev/null || true)
+release=$(cat /opt/zextras/conf/.ns8/release.txt 2>/dev/null || cat /usr/share/ns8-carbonio/dist/release.txt)
+
+services="{}"
+rc=1
+if [[ "${phase}" == "running" ]]; then
+    out=$(su - zextras -c "/opt/zextras/bin/zmcontrol status" 2>&1)
+    rc=$?
+    services=$(awk '
+        # A service line has one leading tab, its details have two
+        !/^\t[^\t]/ || NF < 2 { next }
+        {
+            state = tolower($NF); $NF = ""; sub(/[ \t]+$/, ""); sub(/^[ \t]+/, "")
+            printf "%s\"%s\": \"%s\"", (n++ ? ", " : ""), $0, state
+        }
+        END { }' <<<"${out}")
+    services="{${services}}"
+fi
+printf '{"phase": "%s", "release": "%s", "services": %s, "error": "%s"}\n' \
+    "${phase}" "${release}" "${services}" "${error//\"/\'}"
+exit "${rc}"

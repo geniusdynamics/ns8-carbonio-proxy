@@ -1,6 +1,35 @@
 {
-  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "local>NethServer/.github:ns8-automerge"
-  ]
+    "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+    "extends": ["local>NethServer/.github:ns8-automerge"],
+    "customManagers": [
+        {
+            "customType": "regex",
+            "description": "Carbonio CE packages pinned in server/Containerfile, from the Zextras repository",
+            "managerFilePatterns": ["/(^|/)server/Containerfile$/"],
+            "matchStringsStrategy": "recursive",
+            "matchStrings": [
+                "#\\s*renovate-carbonio:\\s*suite=(?<suite>\\S+)[\\s\\S]*?\\n\"\\n",
+                "(?:^|\\s)(?<depName>[a-z0-9][a-z0-9+._-]+?)=(?<currentValue>[0-9][^\\s\"\\\\]*)"
+            ],
+            "datasourceTemplate": "deb",
+            "versioningTemplate": "deb",
+            "registryUrlTemplate": "https://repo.zextras.io/release/ubuntu?suite={{suite}}&components=main&binaryArch=amd64"
+        }
+    ],
+    "packageRules": [
+        {
+            "description": "Carbonio CE packages: one pull request for a whole release, merged by hand after the QEMU tests (a Carbonio upgrade migrates the data)",
+            "matchDatasources": ["deb"],
+            "matchFileNames": ["server/Containerfile"],
+            "groupName": "Carbonio CE packages",
+            "groupSlug": "carbonio-packages",
+            "automerge": false
+        },
+        {
+            "description": "Ubuntu base of the Carbonio image: stay on 22.04 (jammy), the newest release where Carbonio runs without systemd",
+            "matchDatasources": ["docker"],
+            "matchPackageNames": ["docker.io/library/ubuntu", "ubuntu"],
+            "allowedVersions": "/^jammy-/"
+        }
+    ]
 }

@@ -1,0 +1,21 @@
+#!/bin/bash
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# The Carbonio setup enables the services of every installed package. One
+# image serves every server role: this wrapper, first in PATH while the
+# setup runs, hides the packages that the role does not use
+# (NS8_CARBONIO_HIDDEN_PACKAGES, space separated).
+#
+if [[ "${1:-}" == "-s" || "${1:-}" == "--status" ]]; then
+    for pkg in "${@:2}"; do
+        for hidden in ${NS8_CARBONIO_HIDDEN_PACKAGES:-}; do
+            if [[ "${pkg}" == "${hidden}" ]]; then
+                echo "dpkg-query: package '${pkg}' is not installed" >&2
+                exit 1
+            fi
+        done
+    done
+fi
+exec /usr/bin/dpkg "$@"
