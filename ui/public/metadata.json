@@ -1,19 +1,23 @@
 {
-  "name": "kickstart",
+  "name": "Carbonio CE edge proxy",
+  "upstream_name": "Carbonio CE 26.9",
   "description": {
-    "en": "My kickstart module"
+    "en": "Extra entry point of a multi-server Carbonio CE installation: webmail, IMAP and POP3 routed to every mailbox server. Needs a Carbonio CE main server. Unofficial, not endorsed by Zextras."
   },
-  "categories": [],
+  "categories": [
+    "email"
+  ],
   "authors": [
     {
-      "name": "Name Surname",
-      "email": "author@yourmail.org"
+      "name": "Genius Dynamics",
+      "email": "support@genius.africa"
     }
   ],
   "docs": {
-    "documentation_url": "https://docs.kickstart.com/",
-    "bug_url": "https://github.com/NethServer/dev",
-    "code_url": "https://github.com/author/ns8-kickstart"
+    "documentation_url": "https://github.com/geniusdynamics/ns8-carbonio-proxy#readme",
+    "bug_url": "https://github.com/geniusdynamics/ns8-carbonio-proxy/issues",
+    "code_url": "https://github.com/geniusdynamics/ns8-carbonio-proxy",
+    "relnotes_url": "https://github.com/geniusdynamics/ns8-carbonio-proxy/releases"
   },
-  "source": "ghcr.io/nethserver/kickstart"
+  "source": "ghcr.io/geniusdynamics/carbonio-proxy"
 }

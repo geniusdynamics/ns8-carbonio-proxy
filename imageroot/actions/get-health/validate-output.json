@@ -1,0 +1,18 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Carbonio health",
+    "$id": "http://schema.nethserver.org/carbonio/get-health-output.json",
+    "type": "object",
+    "required": ["healthy", "service_active", "phase", "services"],
+    "properties": {
+        "healthy": {"type": "boolean"},
+        "service_active": {"type": "boolean"},
+        "phase": {"type": "string"},
+        "release": {"type": "string"},
+        "services": {"type": "object", "additionalProperties": {"type": "string"}},
+        "error": {"type": "string"},
+        "cluster_role": {"type": "string"},
+        "servers": {"type": "array"},
+        "store_disk": {"type": "object"}
+    }
+}

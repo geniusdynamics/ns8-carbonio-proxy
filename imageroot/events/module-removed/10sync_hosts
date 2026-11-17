@@ -1,0 +1,12 @@
+#!/bin/bash
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+# A Carbonio server of the cluster changed: refresh the host names that
+# the container resolves (no restart needed)
+exec 1>&2
+[[ -n "${CARBONIO_HOSTNAME}" ]] || exit 0
+carbonio-sync-hosts

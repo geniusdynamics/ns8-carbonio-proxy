@@ -43,7 +43,7 @@
       <cv-column :md="4" :max="4">
         <NsInfoCard
           light
-          :title="$t('status.kickstart_webapp')"
+          :title="$t('status.carbonio_webapp')"
           :description="this.host ? this.host : $t('status.not_configured')"
           :icon="Wikis32"
           :loading="loading.getConfiguration"
@@ -134,6 +134,100 @@
           :moduleId="instanceName"
           light
         />
+      </cv-column>
+    </cv-row>
+    <!-- Carbonio health -->
+    <cv-row>
+      <cv-column>
+        <cv-tile light class="mg-bottom">
+          <h4 class="mg-bottom-sm">{{ $t("status.carbonio_health") }}</h4>
+          <cv-skeleton-text
+            v-if="loading.getHealth"
+            :paragraph="true"
+            :line-count="4"
+          />
+          <NsInlineNotification
+            v-else-if="error.getHealth"
+            kind="error"
+            :title="$t('action.get-health')"
+            :description="error.getHealth"
+            :showCloseButton="false"
+          />
+          <template v-else>
+            <NsInlineNotification
+              :kind="health.healthy ? 'success' : 'warning'"
+              :title="
+                health.healthy
+                  ? $t('status.healthy')
+                  : $t('status.phase_' + (health.phase || 'unknown'))
+              "
+              :description="health.error || ''"
+              :showCloseButton="false"
+            />
+            <p class="mg-bottom-sm">
+              {{ $t("status.release") }}:
+              <strong>{{ health.release || "-" }}</strong> &middot;
+              {{ $t("status.cluster_role") }}:
+              <strong>{{
+                $t("status.role_" + (health.cluster_role || "standalone"))
+              }}</strong>
+            </p>
+            <cv-structured-list
+              v-if="Object.keys(health.services || {}).length"
+            >
+              <template slot="headings">
+                <cv-structured-list-heading>{{
+                  $t("status.carbonio_service")
+                }}</cv-structured-list-heading>
+                <cv-structured-list-heading>{{
+                  $t("status.state")
+                }}</cv-structured-list-heading>
+              </template>
+              <template slot="items">
+                <cv-structured-list-item
+                  v-for="(state, name) in health.services"
+                  :key="name"
+                >
+                  <cv-structured-list-data>{{ name }}</cv-structured-list-data>
+                  <cv-structured-list-data>
+                    <cv-tag
+                      :kind="state === 'running' ? 'green' : 'red'"
+                      :label="state"
+                    />
+                  </cv-structured-list-data>
+                </cv-structured-list-item>
+              </template>
+            </cv-structured-list>
+            <template v-if="(health.servers || []).length > 1">
+              <h5 class="mg-bottom-sm">{{ $t("status.cluster_servers") }}</h5>
+              <cv-structured-list>
+                <template slot="items">
+                  <cv-structured-list-item
+                    v-for="server in health.servers"
+                    :key="server.module_id"
+                  >
+                    <cv-structured-list-data>{{
+                      server.fqdn
+                    }}</cv-structured-list-data>
+                    <cv-structured-list-data>{{
+                      $t("status.role_" + server.role)
+                    }}</cv-structured-list-data>
+                    <cv-structured-list-data
+                      >{{ server.module_id }} &middot; {{ $t("status.node") }}
+                      {{ server.node }}</cv-structured-list-data
+                    >
+                    <cv-structured-list-data>{{
+                      server.release
+                    }}</cv-structured-list-data>
+                  </cv-structured-list-item>
+                </template>
+              </cv-structured-list>
+            </template>
+            <NsButton kind="ghost" :icon="Restart20" @click="getHealth">
+              {{ $t("status.refresh") }}
+            </NsButton>
+          </template>
+        </cv-tile>
       </cv-column>
     </cv-row>
     <!-- services -->
@@ -325,13 +419,16 @@ export default {
       },
       backupRepositories: [],
       backups: [],
+      health: {},
       loading: {
+        getHealth: false,
         getStatus: false,
         listBackupRepositories: false,
         listBackups: false,
         getConfiguration: false,
       },
       error: {
+        getHealth: "",
         getStatus: "",
         listBackupRepositories: "",
         listBackups: "",
@@ -382,10 +479,43 @@ export default {
     this.getConfiguration();
     this.getStatus();
     this.listBackupRepositories();
+    this.getHealth();
   },
   methods: {
     goToWebapp() {
       window.open(`https://${this.host}`, "_blank");
+    },
+    async getHealth() {
+      this.loading.getHealth = true;
+      this.error.getHealth = "";
+      const taskAction = "get-health";
+      const eventId = this.getUuid();
+      this.core.$root.$once(`${taskAction}-aborted-${eventId}`, () => {
+        this.error.getHealth = this.$t("error.generic_error");
+        this.loading.getHealth = false;
+      });
+      this.core.$root.$once(
+        `${taskAction}-completed-${eventId}`,
+        (taskContext, taskResult) => {
+          this.health = taskResult.output;
+          this.loading.getHealth = false;
+        }
+      );
+      const res = await this.createModuleTaskForApp(this.instanceName, {
+        action: taskAction,
+        extra: {
+          title: this.$t("action." + taskAction),
+          isNotificationHidden: true,
+          eventId,
+        },
+      }).then(
+        () => [null],
+        (err) => [err]
+      );
+      if (res[0]) {
+        this.error.getHealth = this.getErrorMessage(res[0]);
+        this.loading.getHealth = false;
+      }
     },
     async getConfiguration() {
       this.loading.getConfiguration = true;
@@ -599,5 +729,13 @@ export default {
 .break-word {
   word-wrap: break-word;
   max-width: 30vw;
+}
+
+.mg-bottom {
+  margin-bottom: $spacing-06;
+}
+
+.mg-bottom-sm {
+  margin-bottom: $spacing-03;
 }
 </style>

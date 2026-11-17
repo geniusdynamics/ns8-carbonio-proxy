@@ -1,0 +1,5 @@
+#!/bin/sh
+# No-op stand-in for the Zextras pending-setups tool: the NethServer 8
+# Carbonio image does not run the Carbonio Mesh (service-discover).
+echo "pending-setups: Carbonio Mesh is not used in this image, nothing to do" >&2
+exit 0

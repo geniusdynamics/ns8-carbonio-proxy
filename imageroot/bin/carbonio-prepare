@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# ExecStartPre of carbonio.service: write the runtime files read by the
+# unit and by the container, in state/runtime/:
+#
+# - container.env  non-secret settings of carbonio-run (--env-file)
+# - runtime.env    podman arguments: published ports and network mode
+# - hosts          the other servers of the installation (live updates)
+#
+# With --hash it prints the fingerprint of the settings that need a
+# container restart, without writing anything.
+#
+
+import hashlib
+import os
+import resource
+import subprocess
+import sys
+
+import agent
+import carbonio
+
+env = carbonio.env
+rdb = agent.redis_connect(use_replica=True)
+role = carbonio.cluster_role()
+vpn_ip = carbonio.node_vpn_ip(rdb)
+web_port, admin_port = (carbonio.tcp_ports() + [0, 0])[:2]
+
+container = {
+    "CARBONIO_HOSTNAME": env("CARBONIO_HOSTNAME"),
+    "CARBONIO_ROLE": carbonio.container_role(),
+    "CARBONIO_LDAP_HOST": env("CARBONIO_LDAP_HOST") or env("CARBONIO_HOSTNAME"),
+    "CARBONIO_SMTP_HOST": env("CARBONIO_SMTP_HOST") or env("CARBONIO_HOSTNAME"),
+    "CARBONIO_MAIL_DOMAIN": env("CARBONIO_MAIL_DOMAIN"),
+    "CARBONIO_PUBLIC_HOSTNAME": env("TRAEFIK_HOST") or env("CARBONIO_HOSTNAME"),
+    "CARBONIO_ADMIN_HOSTNAME": env("CARBONIO_ADMIN_HOSTNAME"),
+    "CARBONIO_ANTIVIRUS": "false",
+    "CARBONIO_TIMEZONE": env("CARBONIO_TIMEZONE", "UTC"),
+}
+
+publish = []
+if web_port:
+    publish.append(f"--publish=127.0.0.1:{web_port}:443")
+if admin_port:
+    publish.append(f"--publish=127.0.0.1:{admin_port}:6071")
+publish += [f"--publish={p}:{p}" for p in carbonio.MAIL_PORTS]
+vpn_ports = carbonio.PROXY_VPN_PORTS
+if vpn_ports:
+    if not vpn_ip:
+        print(agent.SD_ERR + "The node WireGuard address is unknown: cannot publish the cluster ports", file=sys.stderr)
+        sys.exit(1)
+    publish += [f"--publish={vpn_ip}:{p}:{p}" for p in vpn_ports if p not in carbonio.MAIL_PORTS]
+
+# The proxy must see the real address of the clients. pasta (Podman 5) keeps
+# it; slirp4netns keeps it only with its own port handler.
+netcmd = subprocess.run(["podman", "info", "--format", "{{.Host.RootlessNetworkCmd}}"],
+                        capture_output=True, text=True).stdout.strip()
+network = "" if netcmd == "pasta" else "--network=slirp4netns:port_handler=slirp4netns,enable_ipv6=false"
+
+# Carbonio wants 524288 open files: stay within the hard limit of the
+# module user, or podman cannot start the container
+nofile = min(524288, resource.getrlimit(resource.RLIMIT_NOFILE)[1])
+
+runtime = {
+    "CARBONIO_PUBLISH": " ".join(publish),
+    "CARBONIO_NETWORK": network,
+    "CARBONIO_ULIMIT": f"--ulimit=nofile={nofile}:{nofile}",
+}
+
+
+def render(values):
+    return "".join(f"{k}={v}\n" for k, v in values.items())
+
+
+fingerprint = hashlib.sha256((render(container) + render(runtime) + env("CARBONIO_SERVER_IMAGE")).encode()).hexdigest()
+if "--hash" in sys.argv:
+    print(fingerprint)
+    sys.exit(0)
+
+os.makedirs("runtime", exist_ok=True)
+for directory in ("dump", "restore"):
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+carbonio.write_file_atomic("runtime/container.env", render(container))
+carbonio.write_file_atomic("runtime/runtime.env", render(runtime))
+carbonio.write_file_atomic("runtime/started.hash", fingerprint + "\n")
+carbonio.write_hosts_file(rdb)

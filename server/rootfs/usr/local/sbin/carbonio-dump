@@ -1,0 +1,44 @@
+#!/bin/bash
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# Consistent dumps of the LDAP directory and of the mailbox database, for
+# the backup: carbonio-dump DIR writes DIR/ldap.ldif and DIR/mariadb.sql.gz.
+# Run inside the running container (podman exec).
+#
+
+set -euo pipefail
+umask 077
+out=${1:?usage: carbonio-dump DIR}
+mkdir -p "${out}"
+tmp=$(mktemp -d /opt/zextras/data/tmp/ns8-dump.XXXXXX)
+chown zextras:zextras "${tmp}"
+chmod 0700 "${tmp}"
+trap 'rm -rf "${tmp}"' EXIT
+
+if [[ -x /opt/zextras/common/libexec/slapd ]] && su - zextras -c "zmprov -l gs \$(zmhostname) zimbraServiceEnabled" | grep -q ': directory-server$\|: ldap$'; then
+    su - zextras -c "/opt/zextras/libexec/zmslapcat ${tmp}" >/dev/null
+    install -m 0600 "${tmp}/ldap.bak" "${out}/ldap.ldif"
+    echo "LDAP directory dumped" >&2
+fi
+
+if [[ -S /run/carbonio/mysql.sock ]] || pgrep -x mariadbd >/dev/null; then
+    # The password goes in a private option file, never on a command line
+    (
+        umask 077
+        printf '[client]\nuser=root\npassword=%s\nsocket=%s\n' \
+            "$(su - zextras -c 'zmlocalconfig -s -m nokey mysql_root_password')" \
+            "$(awk -F'= *' '/^socket/ { print $2; exit }' /opt/zextras/conf/my.cnf)" >"${tmp}/my.cnf"
+    )
+    /opt/zextras/common/bin/mysqldump --defaults-extra-file="${tmp}/my.cnf" \
+        --all-databases --single-transaction --quick --routines --events \
+        --add-drop-database --skip-dump-date >"${tmp}/mariadb.sql"
+    gzip -c "${tmp}/mariadb.sql" >"${out}/mariadb.sql.gz.tmp"
+    chmod 0600 "${out}/mariadb.sql.gz.tmp"
+    mv -f "${out}/mariadb.sql.gz.tmp" "${out}/mariadb.sql.gz"
+    echo "Mailbox database dumped" >&2
+fi

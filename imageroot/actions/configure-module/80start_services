@@ -1,17 +1,43 @@
-#!/bin/bash
+#!/usr/bin/env python3
 
 #
-# Copyright (C) 2023 Nethesis S.r.l.
+# Copyright (C) 2026 Genius Dynamics
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-set -e
 
-# Redirect any output to the journal (stderr)
-exec 1>&2
+# Start Carbonio, or restart it when a setting of the container changed,
+# and wait until it runs: the first start runs the Carbonio setup.
 
-# If the control reaches this step, the service can be enabled and started
+import os
+import subprocess
+import sys
 
-touch smarthost.env
+import agent
+import carbonio
 
-systemctl --user enable kickstart.service
-systemctl --user restart kickstart.service
+wanted = subprocess.run(["carbonio-prepare", "--hash"], capture_output=True, text=True, check=True).stdout.strip()
+try:
+    with open("runtime/started.hash") as fhash:
+        started = fhash.read().strip()
+except FileNotFoundError:
+    started = ""
+
+subprocess.run(["systemctl", "--user", "enable", carbonio.SERVICE], check=True)
+if not carbonio.service_active() or wanted != started:
+    print("Starting carbonio.service", file=sys.stderr)
+    subprocess.run(["systemctl", "--user", "restart", carbonio.SERVICE], check=True)
+else:
+    subprocess.run(["carbonio-sync-hosts"], check=False)
+
+agent.set_progress(20)
+rc = subprocess.run(["carbonio-wait-ready", "2400"]).returncode
+if rc != 0:
+    print(agent.SD_ERR + "Carbonio did not start: see the module logs", file=sys.stderr)
+    sys.exit(rc)
+
+if not carbonio.initialized():
+    agent.set_env("CARBONIO_INITIALIZED", "1")
+    # Only the first setup needs the administrator password
+    secrets_map = carbonio.read_secrets()
+    if secrets_map.pop("CARBONIO_ADMIN_PASSWORD", None) is not None:
+        carbonio.write_secrets(secrets_map)

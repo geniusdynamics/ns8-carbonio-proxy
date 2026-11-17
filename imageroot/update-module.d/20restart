@@ -1,15 +1,27 @@
-#!/bin/bash
+#!/usr/bin/env python3
 
 #
-# Copyright (C) 2023 Nethesis S.r.l.
+# Copyright (C) 2026 Genius Dynamics
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 
-# If the control reaches this step, the service can be enabled and started
+# Restart Carbonio on the new release, unless 10check_release refused it.
+# The new container upgrades the data on start (carbonio-run).
 
-set -e
+import os
+import subprocess
+import sys
 
-# Redirect any output to the journal (stderr)
-exec 1>&2
+import agent
+import carbonio
 
-systemctl --user try-restart kickstart.service
+blocked = carbonio.env("CARBONIO_UPDATE_BLOCKED")
+if blocked:
+    print(agent.SD_ERR + f"Not restarting Carbonio: {blocked}", file=sys.stderr)
+    sys.exit(1)
+if not carbonio.initialized():
+    sys.exit(0)
+subprocess.run(["systemctl", "--user", "try-restart", carbonio.SERVICE], check=False)
+if carbonio.service_active():
+    if subprocess.run(["carbonio-wait-ready", "1800"]).returncode == 0:
+        carbonio.publish_service()

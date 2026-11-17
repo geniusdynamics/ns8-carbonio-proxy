@@ -1,172 +1,176 @@
-# ns8-kickstart
+# ns8-carbonio-proxy
 
-This is a template module for [NethServer 8](https://github.com/NethServer/ns8-core).
-To start a new module from it:
+An edge proxy for a multi-server [Carbonio CE](https://www.zextras.com/carbonio-community-edition/)
+installation built with [ns8-carbonio](https://github.com/geniusdynamics/ns8-carbonio)
+on [NethServer 8](https://github.com/NethServer/ns8-core).
 
-1. Click on [Use this template](https://github.com/NethServer/ns8-kickstart/generate).
-   Name your repo with `ns8-` prefix (e.g. `ns8-mymodule`). 
-   Do not end your module name with a number, like ~~`ns8-baaad2`~~!
+The proxy is an extra entry point to the installation, on a node of its own. It
+serves webmail, the Admin Panel, IMAP and POP3, and sends every user to the
+mailbox server that holds their mailbox.
 
-1. Clone the repository, enter the cloned directory and
-   [configure your GIT identity](https://git-scm.com/book/en/v2/Getting-Started-First-Time-Git-Setup#_your_identity)
+> **Unofficial.** Genius Dynamics builds this module from the public Carbonio CE
+> packages. Zextras does not endorse it. "Carbonio" and "Zextras" are trademarks
+> of Zextras.
 
-1. Rename some references inside the repo:
+**A single business does not need this module.** A single ns8-carbonio server
+already includes the Carbonio proxy, and owns the mail ports of its node.
+
+**Experimental.** Multi-server behaviour was tested with containers on one host.
+The CI checks only installation, validation and removal, because one test node
+cannot run both a main server and a proxy.
+
+## Contents
+
+- [How it works](#how-it-works)
+- [Setup](#setup)
+- [Ports](#ports)
+- [Redis key contract](#redis-key-contract)
+- [Secrets](#secrets)
+- [Backup](#backup)
+- [Updates](#updates)
+- [Known limits](#known-limits)
+- [Licences](#licences)
+- [Debug](#debug)
+
+## How it works
+
+This module runs the Carbonio **proxy role** (nginx and memcached), in the same
+container image as ns8-carbonio, built from the public Carbonio CE packages.
+See [server/](server). That directory is kept identical to the one in
+ns8-carbonio.
+
+At its first start the proxy joins the directory (LDAP) of an ns8-carbonio
+**main server**. From then on, Carbonio's own route lookup finds the right
+mailbox server for each login, so the module writes no upstream list. A mailbox
+server added later is routed as soon as it exists in the directory.
+
+The proxy also needs to resolve the host names of the main server and of every
+additional mailbox server to their WireGuard addresses. It reads them from the
+Redis service records and refreshes them live:
+
+- on the `carbonio-server-changed` event,
+- on the `module-removed` event.
+
+The container is not restarted for this.
+
+What stays elsewhere:
+
+- **Traefik** keeps ports 80 and 443 of the node, and forwards the web client
+  to the proxy.
+- **SMTP** (inbound mail, submission on 587 and 465) stays on the main server.
+  The Carbonio proxy does not proxy SMTP.
+
+## Setup
+
+1. Set up the main server. On one node, configure ns8-carbonio as *Main server
+   of a multi-server installation*, with *Accept new servers* on. Optionally,
+   add mailbox servers on other nodes.
+2. Install the proxy on another node. That node must not run another mail
+   application:
+
+       add-module ghcr.io/geniusdynamics/carbonio-proxy:latest 1
+
+3. Configure the proxy in *Settings*. Choose the main server from the list (it
+   shows the main servers of the same Carbonio release), then set the host name
+   of the proxy. Or from the command line:
+
+   ```bash
+   api-cli run module/carbonio-proxy1/configure-module --data '{"host":"webmail.example.org","join":"carbonio1","lets_encrypt":true}'
    ```
-   modulename=$(basename $(pwd) | sed 's/^ns8-//') &&
-   git mv imageroot/systemd/user/kickstart.service imageroot/systemd/user/${modulename}.service &&
-   git mv imageroot/systemd/user/kickstart-app.service imageroot/systemd/user/${modulename}-app.service && 
-   git mv tests/kickstart.robot tests/${modulename}.robot &&
-   sed -i "s/kickstart/${modulename}/g" $(find .github/ * -type f) &&
-   git commit -a -m "Repository initialization"
-   ```
 
-1. Edit this `README.md` file, by replacing this section with your module
-   description
+4. Point users at the proxy. In DNS, point the webmail and IMAP/POP3 names at
+   the proxy node. MX records keep pointing at the main server.
 
-1. Adjust `.github/workflows` to your needs. `clean-registry.yml` might
-   need the proper list of image names to work correctly. Unused workflows
-   can be disabled from the GitHub Actions interface.
+The *Status* page, and the `get-health` action, show the state of the proxy
+services and the servers of the installation.
 
-1. Commit and push your local changes
+## Ports
 
-## Install
+| Port | Bound on |
+|---|---|
+| 110, 143, 993, 995 | every node address, opened in the firewall |
+| web client (443 in the container) | 127.0.0.1, `TCP_PORTS[0]`, behind Traefik |
+| Admin Panel (6071 in the container) | 127.0.0.1, `TCP_PORTS[1]`, behind Traefik when an Admin Panel host name is set |
 
-Instantiate the module with:
+Configuration is refused when another mail module (ns8-carbonio, ns8-mail,
+mailcow and others) is on the node, or when one of these ports is in use.
+Connections in TIME_WAIT do not count as in use.
 
-    add-module ghcr.io/nethserver/kickstart:latest 1
+## Redis key contract
 
-The output of the command will return the instance name.
-Output example:
-
-    {"module_id": "kickstart1", "image_name": "kickstart", "image_url": "ghcr.io/nethserver/kickstart:latest"}
-
-## Configure
-
-Let's assume that the mattermost instance is named `kickstart1`.
-
-Launch `configure-module`, by setting the following parameters:
-- `host`: a fully qualified domain name for the application
-- `http2https`: enable or disable HTTP to HTTPS redirection (true/false)
-- `lets_encrypt`: enable or disable Let's Encrypt certificate (true/false)
-
-
-Example:
+Each proxy publishes a non-secret record:
 
 ```
-api-cli run configure-module --agent module/kickstart1 --data - <<EOF
-{
-  "host": "kickstart.domain.com",
-  "http2https": true,
-  "lets_encrypt": false
-}
-EOF
+module/<module_id>/srv/tcp/carbonio-proxy   (hash)
+  host         WireGuard address of the node
+  fqdn         Carbonio server name of the proxy
+  role         proxy
+  master       module id of the main server
+  node         node id
+  release      Carbonio release
+  public_host  web host name
 ```
 
-The above command will:
-- start and configure the kickstart instance
-- configure a virtual host for trafik to access the instance
+It reads the `module/*/srv/tcp/carbonio` records of the ns8-carbonio servers.
+That contract is documented in the ns8-carbonio README.
 
-## Get the configuration
-You can retrieve the configuration with
+## Secrets
 
-```
-api-cli run get-configuration --agent module/kickstart1
-```
+The proxy receives the passwords of the directory service accounts from the
+main server as a sealed bundle:
 
-## Uninstall
+1. The proxy creates an ephemeral X25519 key pair and sends the public key with
+   its `seal-join-bundle` request.
+2. The main server encrypts the bundle for that key, with ECDH, then
+   HKDF-SHA256, then AES-256-GCM.
+3. The proxy decrypts it and writes the passwords to `state/secrets.env`, with
+   mode 0600.
 
-To uninstall the instance:
+The passwords never reach Redis in clear. Only modules holding the
+`carbonio-peer` role on the main server can call that action. The proxy has
+that role through its image label `carbonio@any:carbonio-peer`.
 
-    remove-module --no-preserve kickstart1
+`get-configuration` returns only a `ldap_secrets_set` boolean.
 
-## Update
+## Backup
 
-To Update the instance:
+The backup includes:
 
-    api-cli run update-module --data '{"module_url":"ghcr.io/nethserver/kickstart:latest","instances":["kickstart1"],"force":true}'
+- `state/secrets.env`,
+- the configuration, data and certificate volumes.
 
-## Smarthost setting discovery
+The proxy holds no mail. On restore, the proxy joins the same main server again.
 
-Some configuration settings, like the smarthost setup, are not part of the
-`configure-module` action input: they are discovered by looking at some
-Redis keys.  To ensure the module is always up-to-date with the
-centralized [smarthost
-setup](https://nethserver.github.io/ns8-core/core/smarthost/) every time
-kickstart starts, the command `bin/discover-smarthost` runs and refreshes
-the `state/smarthost.env` file with fresh values from Redis.
+## Updates
 
-Furthermore if smarthost setup is changed when kickstart is already
-running, the event handler `events/smarthost-changed/10reload_services`
-restarts the main module service.
+- The same release check as ns8-carbonio runs: a downgrade of the Carbonio
+  packages is refused, and the running release is kept.
+- Update the main server first, then the mailbox servers, then the proxies.
+- A proxy joins only a main server of the same release.
 
-See also the `systemd/user/kickstart.service` file.
+## Known limits
 
-This setting discovery is just an example to understand how the module is
-expected to work: it can be rewritten or discarded completely.
+- **Stale routes after a mailbox move.** From Carbonio 26.3, memcached listens
+  only on the loopback, and the purge of the route cache by the mailbox servers
+  moved to the Carbonio Mesh, which this release does not run. After a mailbox
+  moves to another server, a cached route can last until it expires
+  (`zimbraReverseProxyCacheEntryTTL`). To clear the cache earlier, restart the
+  proxy.
+- **No SMTP.** Only webmail, Admin Panel, IMAP and POP3 go through the proxy.
+
+## Licences
+
+- **The module** is under GPL-3.0-or-later.
+- **The runtime image** contains the unmodified Carbonio CE packages, under
+  GPL-2.0-only and AGPL-3.0-only, with their licence texts in `/usr/share/doc`.
+  Their source code is at https://github.com/zextras.
+- **No proprietary package is included.** The proprietary `pending-setups` is
+  replaced by a no-op stand-in.
 
 ## Debug
 
-some CLI are needed to debug
-
-- The module runs under an agent that initiate a lot of environment variables (in /home/kickstart1/.config/state), it could be nice to verify them
-on the root terminal
-
-    `runagent -m kickstart1 env`
-
-- you can become runagent for testing scripts and initiate all environment variables
-  
-    `runagent -m kickstart1`
-
- the path become : 
+```bash
+runagent -m carbonio-proxy1 systemctl --user status carbonio
+runagent -m carbonio-proxy1 podman exec carbonio carbonio-status
+journalctl _UID=$(id -u carbonio-proxy1) -t carbonio -f
 ```
-    echo $PATH
-    /home/kickstart1/.config/bin:/usr/local/agent/pyenv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/usr/
-```
-
-- if you want to debug a container or see environment inside
- `runagent -m kickstart1`
- ```
-podman ps
-CONTAINER ID  IMAGE                                      COMMAND               CREATED        STATUS        PORTS                    NAMES
-d292c6ff28e9  localhost/podman-pause:4.6.1-1702418000                          9 minutes ago  Up 9 minutes  127.0.0.1:20015->80/tcp  80b8de25945f-infra
-d8df02bf6f4a  docker.io/library/postgres:15.5-alpine3.19          --character-set-s...  9 minutes ago  Up 9 minutes  127.0.0.1:20015->80/tcp  postgresql-app
-9e58e5bd676f  docker.io/library/nginx:stable-alpine3.17  nginx -g daemon o...  9 minutes ago  Up 9 minutes  127.0.0.1:20015->80/tcp  kickstart-app
-```
-
-you can see what environment variable is inside the container
-```
-podman exec  kickstart-app env
-TERM=xterm
-container=podman
-NGINX_VERSION=1.24.0
-PKG_RELEASE=1
-NJS_VERSION=0.7.12
-NGINX_IMAGE=docker.io/nginx:stable-alpine3.17
-CONFIG_DATABASE_URI="postgresql://postgres:Nethesis,1234@127.0.0.1:5432/toto"
-PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-HOME=/root
-```
-
-you can run a shell inside the container
-
-```
-podman exec -ti   kickstart-app sh
-/ # 
-```
-## Testing
-
-Test the module using the `test-module.sh` script:
-
-
-    ./test-module.sh <NODE_ADDR> ghcr.io/nethserver/kickstart:latest
-
-The tests are made using [Robot Framework](https://robotframework.org/)
-
-## UI translation
-
-Translated with [Weblate](https://hosted.weblate.org/projects/ns8/).
-
-To setup the translation process:
-
-- add [GitHub Weblate app](https://docs.weblate.org/en/latest/admin/continuous.html#github-setup) to your repository
-- add your repository to [hosted.weblate.org]((https://hosted.weblate.org) or ask a NethServer developer to add it to ns8 Weblate project

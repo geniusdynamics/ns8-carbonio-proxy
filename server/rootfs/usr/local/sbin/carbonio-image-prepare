@@ -1,0 +1,45 @@
+#!/bin/bash
+
+#
+# Copyright (C) 2026 Genius Dynamics
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# Runs once at image build time, after the Carbonio packages are installed.
+#
+# The directories that Carbonio writes to are persistent volumes at run
+# time. The packages also ship files in some of them (conf, data, db): keep
+# a pristine copy of those files, with checksums, so carbonio-run can
+# initialize empty volumes and merge new package files on upgrade, as dpkg
+# does with configuration files.
+#
+
+set -euo pipefail
+
+dist=/usr/share/ns8-carbonio/dist
+mkdir -p "${dist}"
+
+for dir in conf data db; do
+    cp -a "/opt/zextras/${dir}" "${dist}/${dir}"
+    (cd "${dist}/${dir}" && find . -type f -print0 | sort -z | xargs -0 sha256sum) >"${dist}/${dir}.sha256"
+done
+
+# Owner and mode of every volume mount point, restored on each start:
+# a new volume is owned by root.
+for dir in conf data db ssl log store index redolog; do
+    stat -c "${dir} %U %G %a" "/opt/zextras/${dir}"
+done >"${dist}/volumes.txt"
+
+# The Carbonio release: /opt/zextras/.version is written by carbonio-core
+cp /opt/zextras/.version "${dist}/release.txt"
+
+# Expected mailbox database schema version
+grep -o "'db.version', '[0-9]*'" /opt/zextras/db/versions-init.sql | grep -o '[0-9]*' >"${dist}/db-version.txt"
+
+# No syslog daemon configuration from the packages: carbonio-run starts
+# rsyslog with /etc/rsyslog-ns8.conf, which writes everything to the
+# container output (journald on the node).
+rm -f /etc/rsyslog.d/50-default.conf
+
+chmod 0755 /usr/local/sbin/carbonio-* /usr/local/lib/ns8-carbonio/dpkg-filter/dpkg

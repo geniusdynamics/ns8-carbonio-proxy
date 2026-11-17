@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
 
 #
-# Copyright (C) 2022 Nethesis S.r.l.
+# Copyright (C) 2026 Genius Dynamics
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 
-import sys
 import json
+import sys
+
 import agent
 
 request = json.load(sys.stdin)
+original = request["environment"]
 
-original_environment = request['environment']
-
-for evar in [
-        "TRAEFIK_HOST",
-        "TRAEFIK_HTTP2HTTPS",
-    ]:
-    agent.set_env(evar, original_environment[evar])
+for name, value in original.items():
+    if name.startswith("CARBONIO_") and name not in ("CARBONIO_SERVER_IMAGE", "CARBONIO_RELEASE"):
+        agent.set_env(name, value)
+for name in ("TRAEFIK_HOST", "TRAEFIK_HTTP2HTTPS"):
+    if name in original:
+        agent.set_env(name, original[name])
 
 agent.dump_env()
