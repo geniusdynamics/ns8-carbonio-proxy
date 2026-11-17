@@ -431,6 +431,16 @@ apply_settings() {
     ((has_mta)) || antivirus=false
     if ((has_mta)); then
         echo "ms ${CARBONIO_HOSTNAME} zimbraMtaMyNetworks \"127.0.0.0/8 ${CARBONIO_MYNETWORKS}\"" >>"${cmds}"
+        # The mailbox servers are resolved by /etc/hosts (the container
+        # itself, and the cluster servers on the WireGuard network), not by
+        # the DNS: deliver over LMTP with the system resolver
+        echo "ms ${CARBONIO_HOSTNAME} zimbraMtaLmtpHostLookup native" >>"${cmds}"
+        # Without the antivirus service amavis must not wait for ClamAV
+        if [[ ${antivirus} == true ]]; then
+            echo "ms ${CARBONIO_HOSTNAME} carbonioAmavisDisableVirusCheck FALSE" >>"${cmds}"
+        else
+            echo "ms ${CARBONIO_HOSTNAME} carbonioAmavisDisableVirusCheck TRUE" >>"${cmds}"
+        fi
     fi
     local enabled
     enabled=$(zx "zmprov -l gs ${CARBONIO_HOSTNAME} zimbraServiceEnabled" || true)
