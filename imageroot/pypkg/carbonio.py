@@ -328,6 +328,37 @@ def podman_exec(args, stdin=None, check=True):
     return subprocess.run(cmd, input=stdin, text=True, capture_output=True, check=check)
 
 
+def wait_ready(timeout=1800, progress=None):
+    """Wait until every Carbonio service runs. Return 0 when ready, 1 on
+    timeout, 3 when the container refused to start. The first start runs
+    the Carbonio setup and takes several minutes. progress(percent) is
+    called while waiting."""
+    import time
+    deadline = time.time() + timeout
+    start = time.time()
+    last_phase = None
+    status = {}
+    while time.time() < deadline:
+        status = carbonio_status()
+        phase = status.get("phase")
+        if phase and phase != last_phase:
+            log(f"Carbonio phase: {phase}")
+            last_phase = phase
+        services = status.get("services") or {}
+        if phase == "running" and services and all(s == "running" for s in services.values()):
+            return 0
+        state = subprocess.run(["systemctl", "--user", "show", "-p", "ActiveState,ExecMainStatus", SERVICE],
+                               capture_output=True, text=True).stdout
+        if "ActiveState=failed" in state or ("ExecMainStatus=3" in state and "ActiveState=active" not in state):
+            log(agent.SD_ERR + "carbonio.service stopped: see the module logs (journalctl -t carbonio)")
+            return 3 if "ExecMainStatus=3" in state else 1
+        if progress:
+            progress(min(90, 20 + int((time.time() - start) / 6)))
+        time.sleep(10)
+    log(agent.SD_ERR + f"Carbonio is not ready after {timeout} seconds: {status}")
+    return 1
+
+
 def carbonio_status():
     """Health of the services, from carbonio-status in the container"""
     try:

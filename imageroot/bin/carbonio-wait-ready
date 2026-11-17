@@ -5,41 +5,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 
-#
 # Wait until every Carbonio service runs: carbonio-wait-ready [TIMEOUT]
-# The first start runs the Carbonio setup and takes several minutes.
 # Exit 0 when ready, 1 on timeout, 3 when the container refused to start.
-#
 
-import subprocess
 import sys
-import time
 
-import agent
 import carbonio
 
-timeout = int(sys.argv[1]) if len(sys.argv) > 1 else 1800
-deadline = time.time() + timeout
-start = time.time()
-last_phase = None
-while time.time() < deadline:
-    status = carbonio.carbonio_status()
-    phase = status.get("phase")
-    if phase != last_phase and phase:
-        print(f"Carbonio phase: {phase}", file=sys.stderr)
-        last_phase = phase
-    services = status.get("services") or {}
-    if phase == "running" and services and all(s == "running" for s in services.values()):
-        sys.exit(0)
-    state = subprocess.run(["systemctl", "--user", "show", "-p", "ActiveState,Result,ExecMainStatus", carbonio.SERVICE],
-                           capture_output=True, text=True).stdout
-    if "ActiveState=failed" in state or ("ExecMainStatus=3" in state and "ActiveState=active" not in state):
-        print(agent.SD_ERR + "carbonio.service stopped: see journalctl --user -u carbonio", file=sys.stderr)
-        sys.exit(3 if "ExecMainStatus=3" in state else 1)
-    # Progress: the first setup takes about 5 minutes
-    elapsed = time.time() - start
-    agent.set_progress(min(90, 20 + int(elapsed / 6)))
-    time.sleep(10)
-
-print(agent.SD_ERR + f"Carbonio is not ready after {timeout} seconds: {status}", file=sys.stderr)
-sys.exit(1)
+sys.exit(carbonio.wait_ready(int(sys.argv[1]) if len(sys.argv) > 1 else 1800))

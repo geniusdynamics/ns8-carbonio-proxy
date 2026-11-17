@@ -30,7 +30,7 @@ else:
     subprocess.run(["carbonio-sync-hosts"], check=False)
 
 agent.set_progress(20)
-rc = subprocess.run(["carbonio-wait-ready", "2400"]).returncode
+rc = carbonio.wait_ready(2400, progress=agent.set_progress)
 if rc != 0:
     print(agent.SD_ERR + "Carbonio did not start: see the module logs", file=sys.stderr)
     sys.exit(rc)
